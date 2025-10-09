@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { Camera, Mic, MicOff, Clock, Utensils, CookingPot, ArrowLeft, Hourglass, ChartNoAxesColumnIncreasing } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Camera, Mic, MicOff, Clock, Utensils, CookingPot, ArrowLeft } from 'lucide-react';
+import { GoogleGenAI } from '@google/genai';
 import './CookingAssistant.css';
 
 export default function CookingAssistant() {
@@ -9,8 +10,7 @@ export default function CookingAssistant() {
     dishType: 'main course',
     mood: [],
     dietary: [],
-    ingredients: '',
-    apiKey: 'AIzaSyDPq_M7fFsU0MRA34h-gAl7406s4FJUu98'
+    ingredients: ''
   });
   
   const [uploadedImage, setUploadedImage] = useState(null);
@@ -22,9 +22,20 @@ export default function CookingAssistant() {
   const [currentStep, setCurrentStep] = useState(0);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
+  const genAIRef = useRef(null);
 
   const moodOptions = ['spicy', 'comfort food', 'healthy', 'cheesy', 'sour', 'sweet'];
   const dietaryOptions = ['high-protein', 'vegetarian', 'vegan', 'gluten-free', 'dairy-free', 'none'];
+
+  // Initialize Gemini AI client
+  useEffect(() => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (apiKey) {
+      genAIRef.current = new GoogleGenAI({ apiKey });
+    } else {
+      console.error('VITE_GEMINI_API_KEY not found in environment variables');
+    }
+  }, []);
 
   const handleCheckboxChange = (category, value) => {
     setFormData(prev => ({
@@ -94,7 +105,7 @@ export default function CookingAssistant() {
   };
 
   const handleVoiceQuery = async (query) => {
-    if (!formData.apiKey) {
+    if (!genAIRef.current) {
       alert('Please configure your Gemini API key!');
       return;
     }
@@ -135,23 +146,14 @@ export default function CookingAssistant() {
       }
     }
 
-    // General cooking questions
+    // General cooking questions using new Gemini SDK
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${formData.apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{ text: `You are a helpful cooking assistant. The user is currently cooking ${selectedRecipe.name} and is on step ${currentStep + 1}: "${selectedRecipe.instructions[currentStep]}". They are asking: ${query}. Provide a concise and helpful answer.` }]
-            }]
-          })
-        }
-      );
-
-      const data = await response.json();
-      const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not process that.';
+      const response = await genAIRef.current.models.generateContent({
+        model: 'gemini-2.0-flash-exp',
+        contents: `You are a helpful cooking assistant. The user is currently cooking ${selectedRecipe.name} and is on step ${currentStep + 1}: "${selectedRecipe.instructions[currentStep]}". They are asking: ${query}. Provide a concise and helpful answer.`
+      });
+      
+      const aiResponse = response.text;
       
       setConversationHistory(prev => [...prev, { role: 'assistant', content: aiResponse }]);
       speakText(aiResponse);
@@ -164,7 +166,7 @@ export default function CookingAssistant() {
   };
 
   const generateRecipes = async () => {
-    if (!formData.apiKey) {
+    if (!genAIRef.current) {
       alert('Please configure your Gemini API key!');
       return;
     }
@@ -194,21 +196,12 @@ export default function CookingAssistant() {
     Format as JSON array with objects containing: name, prepTime, ingredients (array), instructions (array), difficulty`;
 
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${formData.apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{ text: prompt }]
-            }]
-          })
-        }
-      );
-
-      const data = await response.json();
-      const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const response = await genAIRef.current.models.generateContent({
+        model: 'gemini-2.0-flash-exp',
+        contents: prompt
+      });
+      
+      const responseText = response.text;
       
       let recipes = [];
       try {
@@ -418,11 +411,7 @@ export default function CookingAssistant() {
               {generatedRecipes.map((recipe, idx) => (
                 <div key={idx} className="recipe-card">
                   <h3 className="recipe-title">{recipe.name}</h3>
-                  <p className="recipe-meta"> 
-                    <label className="form-label">
-                      <Clock className="label-icon" /> {recipe.prepTime}  |  <ChartNoAxesColumnIncreasing className="label-icon" /> {recipe.difficulty}
-                    </label>
-                  </p>
+                  <p className="recipe-meta">⏱ {recipe.prepTime} | 📊 {recipe.difficulty}</p>
                   <div className="recipe-section">
                     <h4 className="recipe-subtitle">Ingredients:</h4>
                     <ul className="recipe-list">
