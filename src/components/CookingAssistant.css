@@ -19,7 +19,7 @@
 
 .cooking-assistant-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #6B4F4F 0%, #483434 100%);
+  background: linear-gradient(135deg, #A3485A 0%, #842A3B 100%);
   padding: 20px;
 }
 
@@ -57,7 +57,7 @@
 .header-title {
   font-size: 40px;
   font-weight: bold;
-  color: #4C4B16;
+  color: #c55312;
   margin: 0 0 4px 0;
 }
 
@@ -160,7 +160,7 @@
   width: 16px;
   height: 16px;
   cursor: pointer;
-  accent-color: #4C4B16;
+  accent-color: #c55312;
 }
 
 .checkbox-text {
@@ -197,7 +197,7 @@
 .submit-button {
   width: 100%;
   padding: 14px;
-  background-color: #4C4B16;
+  background-color: #c55312;
   color: white;
   border: none;
   border-radius: 8px;
@@ -208,7 +208,7 @@
 }
 
 .submit-button:hover {
-  background-color: #A09F57;
+  background-color: #c16027;
 }
 
 .button-disabled {
@@ -236,15 +236,15 @@
 }
 
 .voice-button:hover {
-  background-color: #A09F57;
+  background-color: #c16027;
 }
 
 .voice-button-active {
-  background-color: #898121 !important;
+  background-color: #c84c12 !important;
 }
 
 .voice-button-active:hover {
-  background-color: #8A8635 !important;
+  background-color: #9b4b1d !important;
 }
 
 /* Image Preview */
