@@ -1,23 +1,25 @@
 import React, { useState, useRef } from 'react';
-import { Camera, Mic, MicOff, Clock, Utensils, ChefHat } from 'lucide-react';
+import { Camera, Mic, MicOff, Clock, Utensils, CookingPot, ArrowLeft, Hourglass, ChartNoAxesColumnIncreasing } from 'lucide-react';
 import './CookingAssistant.css';
 
 export default function CookingAssistant() {
+  const [currentPage, setCurrentPage] = useState('preferences'); // preferences, recommendations, cooking
   const [formData, setFormData] = useState({
     cookingTime: '30min',
     dishType: 'main course',
     mood: [],
     dietary: [],
     ingredients: '',
-    apiKey: 'YOUR_GEMINI_API_KEY_HERE'  // ← PUT YOUR API KEY HERE
+    apiKey: 'AIzaSyDPq_M7fFsU0MRA34h-gAl7406s4FJUu98'
   });
   
   const [uploadedImage, setUploadedImage] = useState(null);
   const [generatedRecipes, setGeneratedRecipes] = useState([]);
+  const [selectedRecipe, setSelectedRecipe] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
-  const [voiceInput, setVoiceInput] = useState('');
+  const [currentStep, setCurrentStep] = useState(0);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -44,6 +46,15 @@ export default function CookingAssistant() {
     }
   };
 
+  const speakText = (text) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
   const startVoiceRecognition = () => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -57,7 +68,6 @@ export default function CookingAssistant() {
 
       recognitionRef.current.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
-        setVoiceInput(transcript);
         handleVoiceQuery(transcript);
       };
 
@@ -92,6 +102,40 @@ export default function CookingAssistant() {
     const newMessage = { role: 'user', content: query };
     setConversationHistory(prev => [...prev, newMessage]);
 
+    // Handle navigation commands
+    const lowerQuery = query.toLowerCase();
+    if (lowerQuery.includes('next') || lowerQuery.includes('next step')) {
+      if (currentStep < selectedRecipe.instructions.length - 1) {
+        const nextStep = currentStep + 1;
+        setCurrentStep(nextStep);
+        speakText(selectedRecipe.instructions[nextStep]);
+        setConversationHistory(prev => [...prev, { 
+          role: 'assistant', 
+          content: selectedRecipe.instructions[nextStep] 
+        }]);
+        return;
+      }
+    } else if (lowerQuery.includes('repeat') || lowerQuery.includes('again')) {
+      speakText(selectedRecipe.instructions[currentStep]);
+      setConversationHistory(prev => [...prev, { 
+        role: 'assistant', 
+        content: selectedRecipe.instructions[currentStep] 
+      }]);
+      return;
+    } else if (lowerQuery.includes('previous') || lowerQuery.includes('back')) {
+      if (currentStep > 0) {
+        const prevStep = currentStep - 1;
+        setCurrentStep(prevStep);
+        speakText(selectedRecipe.instructions[prevStep]);
+        setConversationHistory(prev => [...prev, { 
+          role: 'assistant', 
+          content: selectedRecipe.instructions[prevStep] 
+        }]);
+        return;
+      }
+    }
+
+    // General cooking questions
     try {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${formData.apiKey}`,
@@ -100,7 +144,7 @@ export default function CookingAssistant() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{
-              parts: [{ text: `You are a helpful cooking assistant. The user is asking: ${query}. Provide a concise and helpful answer.` }]
+              parts: [{ text: `You are a helpful cooking assistant. The user is currently cooking ${selectedRecipe.name} and is on step ${currentStep + 1}: "${selectedRecipe.instructions[currentStep]}". They are asking: ${query}. Provide a concise and helpful answer.` }]
             }]
           })
         }
@@ -110,12 +154,12 @@ export default function CookingAssistant() {
       const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not process that.';
       
       setConversationHistory(prev => [...prev, { role: 'assistant', content: aiResponse }]);
+      speakText(aiResponse);
     } catch (error) {
       console.error('Error:', error);
-      setConversationHistory(prev => [...prev, { 
-        role: 'assistant', 
-        content: 'Sorry, there was an error processing your request.' 
-      }]);
+      const errorMsg = 'Sorry, there was an error processing your request.';
+      setConversationHistory(prev => [...prev, { role: 'assistant', content: errorMsg }]);
+      speakText(errorMsg);
     }
   };
 
@@ -191,6 +235,7 @@ export default function CookingAssistant() {
       }
       
       setGeneratedRecipes(recipes);
+      setCurrentPage('recommendations');
     } catch (error) {
       console.error('Error generating recipes:', error);
       alert('Error generating recipes. Please check your API key and try again.');
@@ -199,152 +244,185 @@ export default function CookingAssistant() {
     }
   };
 
-  return (
-    <div className="cooking-assistant-container">
-      <div className="cooking-assistant-wrapper">
-        {/* Header */}
-        <div className="card header-card">
-          <div className="header-content">
-            <ChefHat className="header-icon" />
-            <div>
-              <h1 className="header-title">Cooking Assistant</h1>
-              <p className="header-subtitle">What are you in the mood for?</p>
-            </div>
-          </div>
-        </div>
+  const startCooking = (recipe) => {
+    setSelectedRecipe(recipe);
+    setCurrentStep(0);
+    setConversationHistory([]);
+    setCurrentPage('cooking');
+    // Read first instruction aloud
+    setTimeout(() => {
+      speakText(recipe.instructions[0]);
+    }, 500);
+  };
 
-        {/* Main Form */}
-        <div className="card">
-          <h2 className="section-title">Select your Recipe Preferences</h2>
-          
-          {/* Cooking Time */}
-          <div className="form-group">
-            <label className="form-label">
-              <Clock className="label-icon" />
-              Maximum Cooking Time
-            </label>
-            <select
-              value={formData.cookingTime}
-              onChange={(e) => setFormData(prev => ({ ...prev, cookingTime: e.target.value }))}
-              className="select-field"
-            >
-              <option value="30min">30 minutes</option>
-              <option value="1hour">1 hour</option>
-              <option value="2hours">2 hours</option>
-              <option value="2+hours">2+ hours</option>
-            </select>
-          </div>
-
-          {/* Type of Dish */}
-          <div className="form-group">
-            <label className="form-label">
-              <Utensils className="label-icon" />
-              Type of Dish
-            </label>
-            <select
-              value={formData.dishType}
-              onChange={(e) => setFormData(prev => ({ ...prev, dishType: e.target.value }))}
-              className="select-field"
-            >
-              <option value="appetizer">Appetizer</option>
-              <option value="main course">Main Course</option>
-              <option value="dessert">Dessert</option>
-              <option value="snack">Snack</option>
-              <option value="drinks">Drinks</option>
-            </select>
-          </div>
-
-          {/* Mood */}
-          <div className="form-group">
-            <label className="form-label">Mood</label>
-            <div className="checkbox-grid">
-              {moodOptions.map(mood => (
-                <label key={mood} className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={formData.mood.includes(mood)}
-                    onChange={() => handleCheckboxChange('mood', mood)}
-                    className="checkbox-input"
-                  />
-                  <span className="checkbox-text">{mood}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Dietary Preferences */}
-          <div className="form-group">
-            <label className="form-label">Dietary Preferences</label>
-            <div className="checkbox-grid">
-              {dietaryOptions.map(diet => (
-                <label key={diet} className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={formData.dietary.includes(diet)}
-                    onChange={() => handleCheckboxChange('dietary', diet)}
-                    className="checkbox-input"
-                  />
-                  <span className="checkbox-text">{diet}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Ingredients Input */}
-          <div className="form-group">
-            <label className="form-label">Enter Ingredients</label>
-            <textarea
-              placeholder="e.g. tomatoes, onions, chicken, ..."
-              value={formData.ingredients}
-              onChange={(e) => setFormData(prev => ({ ...prev, ingredients: e.target.value }))}
-              rows={3}
-              className="textarea-field"
-            />
-          </div>
-
-          {/* Image Upload */}
-          <div className="form-group">
-            <label className="form-label">Or Upload Image of Ingredients</label>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="upload-button"
-            >
-              <Camera className="button-icon" />
-              Choose Image
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleImageUpload}
-              style={{ display: 'none' }}
-            />
-            {uploadedImage && (
-              <div className="image-preview-container">
-                <img src={uploadedImage} alt="Uploaded ingredients" className="image-preview" />
+  // PAGE 1: PREFERENCES
+  if (currentPage === 'preferences') {
+    return (
+      <div className="cooking-assistant-container">
+        <div className="cooking-assistant-wrapper">
+          <div className="card header-card">
+            <div className="header-content">
+              <CookingPot className="header-icon" />
+              <div>
+                <h1 className="header-title">mise</h1>
+                <p className="header-subtitle">cooking made simple, beautiful, and yours</p>
               </div>
-            )}
+            </div>
           </div>
 
-          {/* Submit Button */}
-          <button
-            onClick={generateRecipes}
-            disabled={isGenerating}
-            className={`submit-button ${isGenerating ? 'button-disabled' : ''}`}
-          >
-            {isGenerating ? 'Generating Recipes...' : 'Generate Recipes'}
-          </button>
-        </div>
-
-        {/* Generated Recipes */}
-        {generatedRecipes.length > 0 && (
           <div className="card">
+            <h2 className="section-title">Select your Recipe Preferences</h2>
+            
+            <div className="form-group">
+              <label className="form-label">
+                <Clock className="label-icon" />
+                Maximum Cooking Time
+              </label>
+              <select
+                value={formData.cookingTime}
+                onChange={(e) => setFormData(prev => ({ ...prev, cookingTime: e.target.value }))}
+                className="select-field"
+              >
+                <option value="30min">30 minutes</option>
+                <option value="1hour">1 hour</option>
+                <option value="2hours">2 hours</option>
+                <option value="2+hours">2+ hours</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                <Utensils className="label-icon" />
+                Type of Dish
+              </label>
+              <select
+                value={formData.dishType}
+                onChange={(e) => setFormData(prev => ({ ...prev, dishType: e.target.value }))}
+                className="select-field"
+              >
+                <option value="appetizer">Appetizer</option>
+                <option value="main course">Main Course</option>
+                <option value="dessert">Dessert</option>
+                <option value="snack">Snack</option>
+                <option value="drinks">Drinks</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Mood</label>
+              <div className="checkbox-grid">
+                {moodOptions.map(mood => (
+                  <label key={mood} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={formData.mood.includes(mood)}
+                      onChange={() => handleCheckboxChange('mood', mood)}
+                      className="checkbox-input"
+                    />
+                    <span className="checkbox-text">{mood}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Dietary Preferences</label>
+              <div className="checkbox-grid">
+                {dietaryOptions.map(diet => (
+                  <label key={diet} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={formData.dietary.includes(diet)}
+                      onChange={() => handleCheckboxChange('dietary', diet)}
+                      className="checkbox-input"
+                    />
+                    <span className="checkbox-text">{diet}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Enter Ingredients</label>
+              <textarea
+                placeholder="e.g. tomatoes, onions, chicken, ..."
+                value={formData.ingredients}
+                onChange={(e) => setFormData(prev => ({ ...prev, ingredients: e.target.value }))}
+                rows={3}
+                className="textarea-field"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Or Upload Image of Ingredients</label>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="upload-button"
+              >
+                <Camera className="button-icon" />
+                Choose Image
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                style={{ display: 'none' }}
+              />
+              {uploadedImage && (
+                <div className="image-preview-container">
+                  <img src={uploadedImage} alt="Uploaded ingredients" className="image-preview" />
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={generateRecipes}
+              disabled={isGenerating}
+              className={`submit-button ${isGenerating ? 'button-disabled' : ''}`}
+            >
+              {isGenerating ? 'Generating Recipes...' : 'Generate Recipes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // PAGE 2: RECOMMENDATIONS
+  if (currentPage === 'recommendations') {
+    return (
+      <div className="cooking-assistant-container">
+        <div className="cooking-assistant-wrapper">
+          <div className="card header-card">
+            <div className="header-content">
+              <CookingPot className="header-icon" />
+              <div>
+                <h1 className="header-title">mise</h1>
+                <p className="header-subtitle">cooking made simple, beautiful, and yours</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <button
+              onClick={() => setCurrentPage('preferences')}
+              className="back-button"
+            >
+              <ArrowLeft className="button-icon" />
+              Back to Preferences
+            </button>
+
             <h2 className="section-title">Your Recipes</h2>
             <div className="recipes-container">
               {generatedRecipes.map((recipe, idx) => (
                 <div key={idx} className="recipe-card">
                   <h3 className="recipe-title">{recipe.name}</h3>
-                  <p className="recipe-meta"> {recipe.prepTime} | {recipe.difficulty}</p>
+                  <p className="recipe-meta"> 
+                    <label className="form-label">
+                      <Clock className="label-icon" /> {recipe.prepTime}  |  <ChartNoAxesColumnIncreasing className="label-icon" /> {recipe.difficulty}
+                    </label>
+                  </p>
                   <div className="recipe-section">
                     <h4 className="recipe-subtitle">Ingredients:</h4>
                     <ul className="recipe-list">
@@ -361,52 +439,146 @@ export default function CookingAssistant() {
                       ))}
                     </ol>
                   </div>
+                  <button
+                    onClick={() => startCooking(recipe)}
+                    className="submit-button"
+                  >
+                    Start Cooking This Recipe
+                  </button>
                 </div>
               ))}
             </div>
           </div>
-        )}
-
-        {/* Voice Interaction */}
-        <div className="card">
-          <h2 className="section-title">Voice Assistant</h2>
-          <p className="section-description">Feel free to ask questions!</p>
-          
-          <button
-            onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
-            className={`voice-button ${isListening ? 'voice-button-active' : ''}`}
-          >
-            {isListening ? (
-              <>
-                <MicOff className="button-icon" />
-                Stop Listening
-              </>
-            ) : (
-              <>
-                <Mic className="button-icon" />
-                Start Voice Input
-              </>
-            )}
-          </button>
-
-          {/* Conversation History */}
-          {conversationHistory.length > 0 && (
-            <div className="conversation-container">
-              {conversationHistory.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={`message ${msg.role === 'user' ? 'message-user' : 'message-assistant'}`}
-                >
-                  <p className="message-role">
-                    {msg.role === 'user' ? 'You' : 'Assistant'}
-                  </p>
-                  <p className="message-content">{msg.content}</p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  // PAGE 3: COOKING MODE
+  if (currentPage === 'cooking') {
+    return (
+      <div className="cooking-assistant-container">
+        <div className="cooking-assistant-wrapper">
+          <div className="card header-card">
+            <div className="header-content">
+              <CookingPot className="header-icon" />
+              <div>
+                <h1 className="header-title">mise</h1>
+                <p className="header-subtitle">cooking made simple, beautiful, and yours</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <button
+              onClick={() => setCurrentPage('recommendations')}
+              className="back-button"
+            >
+              <ArrowLeft className="button-icon" />
+              Back to Recipes
+            </button>
+
+            <h2 className="section-title">Now Cooking: {selectedRecipe.name}</h2>
+            <p className="section-description">Feel free to ask questions!</p>
+
+            {/* Current Step Display */}
+            <div className="current-step-container">
+              <div className="step-header">
+                <span className="step-counter">Step {currentStep + 1} of {selectedRecipe.instructions.length}</span>
+                <div className="step-navigation">
+                  <button
+                    onClick={() => {
+                      if (currentStep > 0) {
+                        const prevStep = currentStep - 1;
+                        setCurrentStep(prevStep);
+                        speakText(selectedRecipe.instructions[prevStep]);
+                      }
+                    }}
+                    disabled={currentStep === 0}
+                    className="step-nav-button"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (currentStep < selectedRecipe.instructions.length - 1) {
+                        const nextStep = currentStep + 1;
+                        setCurrentStep(nextStep);
+                        speakText(selectedRecipe.instructions[nextStep]);
+                      }
+                    }}
+                    disabled={currentStep === selectedRecipe.instructions.length - 1}
+                    className="step-nav-button"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+              <p className="current-step-text">{selectedRecipe.instructions[currentStep]}</p>
+            </div>
+
+            {/* Voice Assistant */}
+            <h3 className="section-title" style={{ marginTop: '2rem' }}>Voice Assistant</h3>
+            
+            <button
+              onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
+              className={`voice-button ${isListening ? 'voice-button-active' : ''}`}
+            >
+              {isListening ? (
+                <>
+                  <MicOff className="button-icon" />
+                  Stop Listening
+                </>
+              ) : (
+                <>
+                  <Mic className="button-icon" />
+                  Start Voice Input
+                </>
+              )}
+            </button>
+
+            <p className="section-description" style={{ marginTop: '1rem', fontSize: '0.875rem' }}>
+              Try saying: "Next step" • "Repeat that" • "What heat level?" • "How do I know when it's done?"
+            </p>
+
+            {conversationHistory.length > 0 && (
+              <div className="conversation-container">
+                {conversationHistory.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    className={`message ${msg.role === 'user' ? 'message-user' : 'message-assistant'}`}
+                  >
+                    <p className="message-role">
+                      {msg.role === 'user' ? 'You' : 'Assistant'}
+                    </p>
+                    <p className="message-content">{msg.content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* All Steps Reference */}
+            <div style={{ marginTop: '2rem' }}>
+              <h3 className="section-title">All Steps</h3>
+              <ol className="recipe-list recipe-list-numbered">
+                {selectedRecipe.instructions.map((step, i) => (
+                  <li
+                    key={i}
+                    style={{
+                      backgroundColor: i === currentStep ? '#fff7ed' : 'transparent',
+                      padding: '0.5rem',
+                      borderRadius: '0.5rem',
+                      fontWeight: i === currentStep ? '600' : '400'
+                    }}
+                  >
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 }

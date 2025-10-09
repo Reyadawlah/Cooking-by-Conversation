@@ -1,6 +1,25 @@
+/* Import multiple weights */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&display=swap');
+
+/* Apply to different elements */
+.header-title {
+  font-family: 'Playfair Display', serif;
+  font-weight: 700;
+}
+
+.section-title {
+  font-family: 'Playfair Display', serif;
+  font-weight: 600;
+}
+
+.recipe-title {
+  font-family: 'Playfair Display', serif;
+  font-weight: 600;
+}
+
 .cooking-assistant-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #fff5f0 0%, #ffe5e5 100%);
+  background: linear-gradient(135deg, #6B4F4F 0%, #483434 100%);
   padding: 20px;
 }
 
@@ -31,14 +50,14 @@
 .header-icon {
   width: 40px;
   height: 40px;
-  color: #ea580c;
+  color: #4C4B16;
   flex-shrink: 0;
 }
 
 .header-title {
-  font-size: 28px;
+  font-size: 40px;
   font-weight: bold;
-  color: #1f2937;
+  color: #4C4B16;
   margin: 0 0 4px 0;
 }
 
@@ -80,7 +99,7 @@
 .select-field:focus,
 .textarea-field:focus {
   outline: none;
-  border-color: #ea580c;
+  border-color: #4C4B16;
   box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.1);
 }
 
@@ -95,7 +114,7 @@
 }
 
 .link {
-  color: #ea580c;
+  color: #4C4B16;
   text-decoration: underline;
 }
 
@@ -141,7 +160,7 @@
   width: 16px;
   height: 16px;
   cursor: pointer;
-  accent-color: #ea580c;
+  accent-color: #4C4B16;
 }
 
 .checkbox-text {
@@ -178,7 +197,7 @@
 .submit-button {
   width: 100%;
   padding: 14px;
-  background-color: #ea580c;
+  background-color: #4C4B16;
   color: white;
   border: none;
   border-radius: 8px;
@@ -189,7 +208,7 @@
 }
 
 .submit-button:hover {
-  background-color: #c2410c;
+  background-color: #A09F57;
 }
 
 .button-disabled {
@@ -206,7 +225,7 @@
   align-items: center;
   gap: 8px;
   padding: 12px 24px;
-  background-color: #ea580c;
+  background-color: #4C4B16;
   color: white;
   border: none;
   border-radius: 8px;
@@ -217,15 +236,15 @@
 }
 
 .voice-button:hover {
-  background-color: #c2410c;
+  background-color: #A09F57;
 }
 
 .voice-button-active {
-  background-color: #dc2626 !important;
+  background-color: #898121 !important;
 }
 
 .voice-button-active:hover {
-  background-color: #b91c1c !important;
+  background-color: #8A8635 !important;
 }
 
 /* Image Preview */
@@ -257,7 +276,7 @@
 .recipe-title {
   font-size: 18px;
   font-weight: 600;
-  color: #ea580c;
+  color: #4C4B16;
   margin: 0 0 8px 0;
 }
 
