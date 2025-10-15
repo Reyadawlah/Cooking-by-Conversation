@@ -4,34 +4,42 @@ import { GoogleGenAI } from '@google/genai';
 import './CookingAssistant.css';
 
 export default function CookingAssistant() {
-  const [currentPage, setCurrentPage] = useState('preferences'); // preferences, recommendations, cooking
+  const [currentPage, setCurrentPage] = useState('preferences');
   const [formData, setFormData] = useState({
     cookingTime: '30min',
     dishType: 'main course',
     mood: [],
     dietary: [],
-    ingredients: ''
+    ingredients: '',
+    dishName: ''
   });
   
   const [uploadedImage, setUploadedImage] = useState(null);
+  const [uploadedImageFile, setUploadedImageFile] = useState(null);
+  const [progressImage, setProgressImage] = useState(null);
+  const [progressImageFile, setProgressImageFile] = useState(null);
+  const [isAnalyzingProgress, setIsAnalyzingProgress] = useState(false);
   const [generatedRecipes, setGeneratedRecipes] = useState([]);
   const [selectedRecipe, setSelectedRecipe] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isHandsFreeMode, setIsHandsFreeMode] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [currentStep, setCurrentStep] = useState(0);
+  
   const fileInputRef = useRef(null);
+  const progressImageInputRef = useRef(null);
   const recognitionRef = useRef(null);
   const genAIRef = useRef(null);
 
   const moodOptions = ['spicy', 'comfort food', 'healthy', 'cheesy', 'sour', 'sweet'];
   const dietaryOptions = ['high-protein', 'vegetarian', 'vegan', 'gluten-free', 'dairy-free', 'none'];
 
-  // Initialize Gemini AI client
   useEffect(() => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (apiKey) {
       genAIRef.current = new GoogleGenAI({ apiKey });
+      console.log('Gemini API initialized successfully');
     } else {
       console.error('VITE_GEMINI_API_KEY not found in environment variables');
     }
@@ -49,6 +57,7 @@ export default function CookingAssistant() {
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      setUploadedImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setUploadedImage(reader.result);
@@ -57,12 +66,98 @@ export default function CookingAssistant() {
     }
   };
 
-  const speakText = (text) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.9;
-      window.speechSynthesis.speak(utterance);
+  const handleProgressImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setProgressImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProgressImage(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const speakText = async (text) => {
+    try {
+      const openAIKey = import.meta.env.VITE_OPENAI_API_KEY;
+      
+      if (openAIKey) {
+        const response = await fetch('https://api.openai.com/v1/audio/speech', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openAIKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'tts-1',
+            input: text.substring(0, 4096),
+            voice: 'nova',
+            speed: 1.0
+          })
+        });
+
+        if (response.ok) {
+          const audioBlob = await response.blob();
+          const audioUrl = URL.createObjectURL(audioBlob);
+          const audio = new Audio(audioUrl);
+          
+          return new Promise((resolve, reject) => {
+            audio.onended = () => {
+              URL.revokeObjectURL(audioUrl);
+              resolve();
+            };
+            audio.onerror = (error) => {
+              URL.revokeObjectURL(audioUrl);
+              reject(error);
+            };
+            audio.play().catch(reject);
+          });
+        } else {
+          throw new Error('OpenAI TTS failed');
+        }
+      } else {
+        throw new Error('OpenAI API key not found');
+      }
+    } catch (error) {
+      console.error('OpenAI TTS error, using fallback:', error);
+      
+      return new Promise((resolve) => {
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.rate = 0.9;
+          utterance.pitch = 1.0;
+          utterance.volume = 1.0;
+          
+          utterance.onend = resolve;
+          utterance.onerror = resolve;
+          
+          const setVoice = () => {
+            const voices = window.speechSynthesis.getVoices();
+            const preferredVoice = voices.find(voice => 
+              voice.name.includes('Google') || 
+              voice.name.includes('Microsoft') ||
+              voice.name.includes('Natural') ||
+              voice.name.includes('Samantha')
+            ) || voices[0];
+            
+            if (preferredVoice) {
+              utterance.voice = preferredVoice;
+            }
+            
+            window.speechSynthesis.speak(utterance);
+          };
+          
+          if (window.speechSynthesis.getVoices().length) {
+            setVoice();
+          } else {
+            window.speechSynthesis.onvoiceschanged = setVoice;
+          }
+        } else {
+          resolve();
+        }
+      });
     }
   };
 
@@ -70,25 +165,70 @@ export default function CookingAssistant() {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
+      recognitionRef.current.continuous = isHandsFreeMode;
       recognitionRef.current.interimResults = false;
 
       recognitionRef.current.onstart = () => {
+        console.log('Speech recognition started, hands-free:', isHandsFreeMode);
         setIsListening(true);
       };
 
       recognitionRef.current.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        handleVoiceQuery(transcript);
+        const transcript = event.results[event.results.length - 1][0].transcript;
+        console.log('Heard:', transcript);
+        
+        if (isHandsFreeMode) {
+          const lowerTranscript = transcript.toLowerCase();
+          if (lowerTranscript.includes('hey mise') || lowerTranscript.includes('hey miss')) {
+            const question = transcript.replace(/hey (mise|miss)[,!.]?\s*/i, '').trim();
+            if (question) {
+              console.log('Processing question:', question);
+              handleVoiceQuery(question);
+            }
+          } else {
+            console.log('No wake word detected, ignoring:', transcript);
+          }
+        } else {
+          handleVoiceQuery(transcript);
+        }
       };
 
       recognitionRef.current.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
-        setIsListening(false);
+        if (!isHandsFreeMode) {
+          setIsListening(false);
+        }
+        if (isHandsFreeMode && event.error !== 'aborted' && event.error !== 'no-speech') {
+          console.log('Restarting recognition after error...');
+          setTimeout(() => {
+            if (isHandsFreeMode && recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+              } catch (e) {
+                console.log('Could not restart:', e);
+              }
+            }
+          }, 1000);
+        }
       };
 
       recognitionRef.current.onend = () => {
-        setIsListening(false);
+        console.log('Speech recognition ended');
+        if (isHandsFreeMode) {
+          console.log('Hands-free mode active, restarting...');
+          setTimeout(() => {
+            if (isHandsFreeMode && recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+                console.log('Recognition restarted');
+              } catch (e) {
+                console.log('Could not restart on end:', e);
+              }
+            }
+          }, 100);
+        } else {
+          setIsListening(false);
+        }
       };
 
       recognitionRef.current.start();
@@ -104,6 +244,22 @@ export default function CookingAssistant() {
     }
   };
 
+  const toggleHandsFreeMode = () => {
+    const newMode = !isHandsFreeMode;
+    setIsHandsFreeMode(newMode);
+    
+    if (newMode) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setTimeout(() => {
+        startVoiceRecognition();
+      }, 300);
+    } else {
+      stopVoiceRecognition();
+    }
+  };
+
   const handleVoiceQuery = async (query) => {
     if (!genAIRef.current) {
       alert('Please configure your Gemini API key!');
@@ -113,55 +269,104 @@ export default function CookingAssistant() {
     const newMessage = { role: 'user', content: query };
     setConversationHistory(prev => [...prev, newMessage]);
 
-    // Handle navigation commands
     const lowerQuery = query.toLowerCase();
+    
+    const processResponse = async (response) => {
+      setConversationHistory(prev => [...prev, { role: 'assistant', content: response }]);
+      await speakText(response);
+    };
+
+    const restartHandsFree = () => {
+      if (isHandsFreeMode) {
+        console.log('Scheduling hands-free restart...');
+        setTimeout(() => {
+          if (isHandsFreeMode && recognitionRef.current) {
+            try {
+              console.log('Attempting to restart recognition...');
+              recognitionRef.current.start();
+              console.log('Recognition restarted successfully');
+            } catch (e) {
+              console.log('Recognition already running or error:', e.message);
+            }
+          }
+        }, 1000);
+      }
+    };
+    
     if (lowerQuery.includes('next') || lowerQuery.includes('next step')) {
       if (currentStep < selectedRecipe.instructions.length - 1) {
         const nextStep = currentStep + 1;
         setCurrentStep(nextStep);
-        speakText(selectedRecipe.instructions[nextStep]);
-        setConversationHistory(prev => [...prev, { 
-          role: 'assistant', 
-          content: selectedRecipe.instructions[nextStep] 
-        }]);
+        const response = `Step ${nextStep + 1}: ${selectedRecipe.instructions[nextStep]}`;
+        await processResponse(response);
+        restartHandsFree();
+        return;
+      } else {
+        const response = "You've reached the last step of the recipe.";
+        await processResponse(response);
+        restartHandsFree();
         return;
       }
     } else if (lowerQuery.includes('repeat') || lowerQuery.includes('again')) {
-      speakText(selectedRecipe.instructions[currentStep]);
-      setConversationHistory(prev => [...prev, { 
-        role: 'assistant', 
-        content: selectedRecipe.instructions[currentStep] 
-      }]);
+      const response = selectedRecipe.instructions[currentStep];
+      await processResponse(response);
+      restartHandsFree();
       return;
     } else if (lowerQuery.includes('previous') || lowerQuery.includes('back')) {
       if (currentStep > 0) {
         const prevStep = currentStep - 1;
         setCurrentStep(prevStep);
-        speakText(selectedRecipe.instructions[prevStep]);
-        setConversationHistory(prev => [...prev, { 
-          role: 'assistant', 
-          content: selectedRecipe.instructions[prevStep] 
-        }]);
+        const response = `Step ${prevStep + 1}: ${selectedRecipe.instructions[prevStep]}`;
+        await processResponse(response);
+        restartHandsFree();
+        return;
+      } else {
+        const response = "You're already at the first step.";
+        await processResponse(response);
+        restartHandsFree();
         return;
       }
     }
 
-    // General cooking questions using new Gemini SDK
     try {
-      const response = await genAIRef.current.models.generateContent({
+      const ingredientsList = selectedRecipe.ingredients?.map((ing, i) => `${i + 1}. ${ing}`).join('\n') || 'No ingredients list available';
+      const allSteps = selectedRecipe.instructions?.map((step, i) => `${i + 1}. ${step}`).join('\n') || 'No instructions available';
+      
+      const prompt = `You are a helpful cooking assistant. The user is currently cooking "${selectedRecipe.name}".
+
+FULL RECIPE CONTEXT:
+Ingredients:
+${ingredientsList}
+
+All Steps:
+${allSteps}
+
+CURRENT STATUS:
+- User is on step ${currentStep + 1}: "${selectedRecipe.instructions[currentStep]}"
+
+USER QUESTION: "${query}"
+
+Provide a concise, helpful answer to their question. If they're asking about ingredients, measurements, or steps, reference the full recipe information above. Keep your response conversational and under 100 words.`;
+      
+      const result = await genAIRef.current.models.generateContent({
         model: 'gemini-2.0-flash-exp',
-        contents: `You are a helpful cooking assistant. The user is currently cooking ${selectedRecipe.name} and is on step ${currentStep + 1}: "${selectedRecipe.instructions[currentStep]}". They are asking: ${query}. Provide a concise and helpful answer.`
+        contents: prompt
       });
       
-      const aiResponse = response.text;
-      
-      setConversationHistory(prev => [...prev, { role: 'assistant', content: aiResponse }]);
-      speakText(aiResponse);
+      const aiResponse = result.text;
+      await processResponse(aiResponse);
+      restartHandsFree();
     } catch (error) {
-      console.error('Error:', error);
-      const errorMsg = 'Sorry, there was an error processing your request.';
-      setConversationHistory(prev => [...prev, { role: 'assistant', content: errorMsg }]);
-      speakText(errorMsg);
+      console.error('Gemini API Error:', error);
+      
+      if (query.toLowerCase().includes('ingredient') || query.toLowerCase().includes('how much')) {
+        const fallbackResponse = `Here are the ingredients for ${selectedRecipe.name}: ${selectedRecipe.ingredients?.join(', ') || 'No ingredients available'}`;
+        await processResponse(fallbackResponse);
+      } else {
+        const errorMsg = 'Sorry, there was an error processing your request. Please try asking again.';
+        await processResponse(errorMsg);
+      }
+      restartHandsFree();
     }
   };
 
@@ -171,20 +376,57 @@ export default function CookingAssistant() {
       return;
     }
 
-    if (!formData.ingredients && !uploadedImage) {
-      alert('Please enter ingredients or upload an image!');
-      return;
-    }
-
     setIsGenerating(true);
 
-    const prompt = `Generate 3 recipe suggestions based on the following criteria:
-    - Cooking time: ${formData.cookingTime}
+    try {
+      let detectedIngredients = '';
+      
+      if (uploadedImageFile) {
+        console.log('Analyzing uploaded image for ingredients...');
+        
+        const reader = new FileReader();
+        const imageData = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(uploadedImageFile);
+        });
+        
+        const base64Data = imageData.split(',')[1];
+        
+        const visionPrompt = 'List all the food ingredients you can identify in this image. Provide only the ingredient names, separated by commas. Be specific about what you see.';
+        
+        const visionResult = await genAIRef.current.models.generateContent({
+          model: 'gemini-2.0-flash-exp',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: visionPrompt },
+                {
+                  inlineData: {
+                    data: base64Data,
+                    mimeType: uploadedImageFile.type
+                  }
+                }
+              ]
+            }
+          ]
+        });
+        
+        detectedIngredients = visionResult.text;
+        console.log('Detected ingredients:', detectedIngredients);
+      }
+
+      const prompt = `Generate 3 recipe suggestions based on the following criteria:
+    ${formData.dishName ? `- Specific dish requested: ${formData.dishName}` : ''}
+    ${formData.cookingTime ? `- Cooking time: ${formData.cookingTime}` : ''}
     - Type of dish: ${formData.dishType}
-    - Mood/flavor profile: ${formData.mood.join(', ') || 'any'}
-    - Dietary preferences: ${formData.dietary.join(', ') || 'none'}
-    - Available ingredients: ${formData.ingredients}
-    ${uploadedImage ? '- (User also provided an image of ingredients)' : ''}
+    ${formData.mood.length > 0 ? `- Mood/flavor profile: ${formData.mood.join(', ')}` : ''}
+    ${formData.dietary.length > 0 ? `- Dietary preferences: ${formData.dietary.join(', ')}` : ''}
+    ${formData.ingredients ? `- Available ingredients (text): ${formData.ingredients}` : ''}
+    ${detectedIngredients ? `- Available ingredients (from image): ${detectedIngredients}` : ''}
+    
+    ${!formData.dishName && !formData.ingredients && !detectedIngredients ? 'Generate popular and versatile recipes.' : ''}
     
     For each recipe, provide:
     1. Recipe name
@@ -195,13 +437,12 @@ export default function CookingAssistant() {
     
     Format as JSON array with objects containing: name, prepTime, ingredients (array), instructions (array), difficulty`;
 
-    try {
-      const response = await genAIRef.current.models.generateContent({
+      const result = await genAIRef.current.models.generateContent({
         model: 'gemini-2.0-flash-exp',
         contents: prompt
       });
       
-      const responseText = response.text;
+      const responseText = result.text;
       
       let recipes = [];
       try {
@@ -211,8 +452,8 @@ export default function CookingAssistant() {
         } else {
           recipes = [{
             name: 'Generated Recipe',
-            prepTime: formData.cookingTime,
-            ingredients: formData.ingredients.split(',').map(i => i.trim()),
+            prepTime: formData.cookingTime || '30min',
+            ingredients: (formData.ingredients || detectedIngredients || '').split(',').map(i => i.trim()).filter(i => i),
             instructions: responseText.split('\n').filter(line => line.trim()),
             difficulty: 'Medium'
           }];
@@ -220,7 +461,7 @@ export default function CookingAssistant() {
       } catch {
         recipes = [{
           name: 'Recipe Suggestion',
-          prepTime: formData.cookingTime,
+          prepTime: formData.cookingTime || '30min',
           ingredients: ['See details below'],
           instructions: [responseText],
           difficulty: 'Medium'
@@ -231,9 +472,78 @@ export default function CookingAssistant() {
       setCurrentPage('recommendations');
     } catch (error) {
       console.error('Error generating recipes:', error);
-      alert('Error generating recipes. Please check your API key and try again.');
+      alert('Error generating recipes. Please check your API key and try again. Error: ' + error.message);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const analyzeProgressImage = async () => {
+    if (!progressImageFile || !genAIRef.current) {
+      alert('Please upload an image first!');
+      return;
+    }
+
+    setIsAnalyzingProgress(true);
+
+    try {
+      console.log('Analyzing cooking progress image...');
+      
+      const reader = new FileReader();
+      const imageData = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(progressImageFile);
+      });
+      
+      const base64Data = imageData.split(',')[1];
+      
+      const visionPrompt = `You are a helpful cooking assistant. The user is cooking "${selectedRecipe.name}" and is currently on step ${currentStep + 1}: "${selectedRecipe.instructions[currentStep]}".
+
+They have uploaded an image of their cooking progress. Please analyze the image and provide feedback:
+1. Does it look like they're on the right track for this step?
+2. Are there any issues or concerns you notice?
+3. Any tips or suggestions to improve?
+
+Keep your response encouraging, concise, and helpful (under 150 words).`;
+      
+      const result = await genAIRef.current.models.generateContent({
+        model: 'gemini-2.0-flash-exp',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: visionPrompt },
+              {
+                inlineData: {
+                  data: base64Data,
+                  mimeType: progressImageFile.type
+                }
+              }
+            ]
+          }
+        ]
+      });
+      
+      const feedback = result.text;
+      
+      console.log('Progress feedback:', feedback);
+      
+      setConversationHistory(prev => [
+        ...prev,
+        { role: 'user', content: '[Uploaded progress image]' },
+        { role: 'assistant', content: feedback }
+      ]);
+      
+      await speakText(feedback);
+      
+      setProgressImage(null);
+      setProgressImageFile(null);
+    } catch (error) {
+      console.error('Error analyzing progress image:', error);
+      alert('Error analyzing image. Please try again. Error: ' + error.message);
+    } finally {
+      setIsAnalyzingProgress(false);
     }
   };
 
@@ -242,13 +552,11 @@ export default function CookingAssistant() {
     setCurrentStep(0);
     setConversationHistory([]);
     setCurrentPage('cooking');
-    // Read first instruction aloud
     setTimeout(() => {
       speakText(recipe.instructions[0]);
     }, 500);
   };
 
-  // PAGE 1: PREFERENCES
   if (currentPage === 'preferences') {
     return (
       <div className="cooking-assistant-container">
@@ -267,15 +575,27 @@ export default function CookingAssistant() {
             <h2 className="section-title">Select your Recipe Preferences</h2>
             
             <div className="form-group">
+              <label className="form-label">Have a specific dish in mind? (Optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. chicken alfredo, chocolate cake, beef stew..."
+                value={formData.dishName}
+                onChange={(e) => setFormData(prev => ({ ...prev, dishName: e.target.value }))}
+                className="select-field"
+              />
+            </div>
+
+            <div className="form-group">
               <label className="form-label">
                 <Clock className="label-icon" />
-                Maximum Cooking Time
+                Maximum Cooking Time (Optional)
               </label>
               <select
                 value={formData.cookingTime}
                 onChange={(e) => setFormData(prev => ({ ...prev, cookingTime: e.target.value }))}
                 className="select-field"
               >
+                <option value="">Any time</option>
                 <option value="30min">30 minutes</option>
                 <option value="1hour">1 hour</option>
                 <option value="2hours">2 hours</option>
@@ -302,7 +622,7 @@ export default function CookingAssistant() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Mood</label>
+              <label className="form-label">Mood (Optional)</label>
               <div className="checkbox-grid">
                 {moodOptions.map(mood => (
                   <label key={mood} className="checkbox-label">
@@ -319,7 +639,7 @@ export default function CookingAssistant() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Dietary Preferences</label>
+              <label className="form-label">Dietary Preferences (Optional)</label>
               <div className="checkbox-grid">
                 {dietaryOptions.map(diet => (
                   <label key={diet} className="checkbox-label">
@@ -336,7 +656,7 @@ export default function CookingAssistant() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Enter Ingredients</label>
+              <label className="form-label">Enter Ingredients (Optional)</label>
               <textarea
                 placeholder="e.g. tomatoes, onions, chicken, ..."
                 value={formData.ingredients}
@@ -347,7 +667,7 @@ export default function CookingAssistant() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Or Upload Image of Ingredients</label>
+              <label className="form-label">Or Upload Image of Ingredients (Optional)</label>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="upload-button"
@@ -382,7 +702,6 @@ export default function CookingAssistant() {
     );
   }
 
-  // PAGE 2: RECOMMENDATIONS
   if (currentPage === 'recommendations') {
     return (
       <div className="cooking-assistant-container">
@@ -443,7 +762,6 @@ export default function CookingAssistant() {
     );
   }
 
-  // PAGE 3: COOKING MODE
   if (currentPage === 'cooking') {
     return (
       <div className="cooking-assistant-container">
@@ -469,6 +787,16 @@ export default function CookingAssistant() {
 
             <h2 className="section-title">Now Cooking: {selectedRecipe.name}</h2>
             <p className="section-description">Feel free to ask questions!</p>
+
+            {/* Ingredients List */}
+            <div style={{ marginBottom: '2rem', padding: '1.5rem', backgroundColor: '#fef3c7', borderRadius: '0.5rem', border: '2px solid #fbbf24' }}>
+              <h3 className="section-title" style={{ marginTop: 0, marginBottom: '1rem' }}>Ingredients</h3>
+              <ul className="recipe-list">
+                {selectedRecipe.ingredients?.map((ing, i) => (
+                  <li key={i} style={{ marginBottom: '0.5rem' }}>{ing}</li>
+                ))}
+              </ul>
+            </div>
 
             {/* Current Step Display */}
             <div className="current-step-container">
@@ -506,29 +834,98 @@ export default function CookingAssistant() {
               <p className="current-step-text">{selectedRecipe.instructions[currentStep]}</p>
             </div>
 
-            {/* Voice Assistant */}
             <h3 className="section-title" style={{ marginTop: '2rem' }}>Voice Assistant</h3>
             
-            <button
-              onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
-              className={`voice-button ${isListening ? 'voice-button-active' : ''}`}
-            >
-              {isListening ? (
-                <>
-                  <MicOff className="button-icon" />
-                  Stop Listening
-                </>
-              ) : (
-                <>
-                  <Mic className="button-icon" />
-                  Start Voice Input
-                </>
-              )}
-            </button>
+            <div style={{ marginBottom: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+              <button
+                onClick={toggleHandsFreeMode}
+                className={`upload-button ${isHandsFreeMode ? 'voice-button-active' : ''}`}
+                style={{ flex: '1' }}
+              >
+                {isHandsFreeMode ? '🎤 Hands-Free Mode: ON' : '🎤 Hands-Free Mode: OFF'}
+              </button>
+            </div>
+
+            {isHandsFreeMode && (
+              <div style={{ 
+                padding: '1rem', 
+                backgroundColor: '#fff7ed', 
+                borderRadius: '0.5rem', 
+                marginBottom: '1rem',
+                border: '2px solid #fb923c'
+              }}>
+                <p style={{ margin: 0, color: '#ea580c', fontWeight: '600' }}>
+                  🎤 Listening for "Hey, Mise!" commands...
+                </p>
+                <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.875rem', color: '#9a3412' }}>
+                  Say "Hey, Mise!" followed by your question
+                </p>
+              </div>
+            )}
+            
+            {!isHandsFreeMode && (
+              <button
+                onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
+                className={`voice-button ${isListening ? 'voice-button-active' : ''}`}
+              >
+                {isListening ? (
+                  <>
+                    <MicOff className="button-icon" />
+                    Stop Listening
+                  </>
+                ) : (
+                  <>
+                    <Mic className="button-icon" />
+                    Start Voice Input
+                  </>
+                )}
+              </button>
+            )}
 
             <p className="section-description" style={{ marginTop: '1rem', fontSize: '0.875rem' }}>
-              Try saying: "Next step" • "Repeat that" • "What heat level?" • "How do I know when it's done?"
+              {isHandsFreeMode 
+                ? 'Example: "Hey, Mise! What temperature should I use?" or "Hey, Mise! Next step"'
+                : 'Try saying: "Next step" • "Repeat that" • "What heat level?" • "How do I know when it\'s done?"'
+              }
             </p>
+
+            <div style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid #e5e7eb' }}>
+              <h3 className="section-title">Check Your Cooking Progress</h3>
+              <p className="section-description" style={{ marginBottom: '1rem' }}>
+                Upload a photo of your current cooking step and get feedback!
+              </p>
+              
+              <button
+                onClick={() => progressImageInputRef.current?.click()}
+                className="upload-button"
+              >
+                <Camera className="button-icon" />
+                Upload Progress Photo
+              </button>
+              <input
+                ref={progressImageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleProgressImageUpload}
+                style={{ display: 'none' }}
+              />
+              
+              {progressImage && (
+                <div style={{ marginTop: '1rem' }}>
+                  <div className="image-preview-container">
+                    <img src={progressImage} alt="Cooking progress" className="image-preview" />
+                  </div>
+                  <button
+                    onClick={analyzeProgressImage}
+                    disabled={isAnalyzingProgress}
+                    className={`submit-button ${isAnalyzingProgress ? 'button-disabled' : ''}`}
+                    style={{ marginTop: '1rem' }}
+                  >
+                    {isAnalyzingProgress ? 'Analyzing...' : 'Get Feedback on This Photo'}
+                  </button>
+                </div>
+              )}
+            </div>
 
             {conversationHistory.length > 0 && (
               <div className="conversation-container">
@@ -546,7 +943,6 @@ export default function CookingAssistant() {
               </div>
             )}
 
-            {/* All Steps Reference */}
             <div style={{ marginTop: '2rem' }}>
               <h3 className="section-title">All Steps</h3>
               <ol className="recipe-list recipe-list-numbered">
@@ -570,4 +966,6 @@ export default function CookingAssistant() {
       </div>
     );
   }
+
+  return null;
 }
