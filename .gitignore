@@ -31,10 +31,10 @@ build/
 dist/
 
 # Environment variables (IMPORTANT!)
-.env
-.env.local
-.env.production
-.env.*.local
+# .env
+# .env.local
+# .env.production
+# .env.*.local
 
 # IDE files
 .vscode/
