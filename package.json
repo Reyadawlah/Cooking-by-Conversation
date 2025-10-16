@@ -1,6 +1,5 @@
 {
   "name": "cooking-assistant",
-  "homepage": "https://Reyadawlah.github.io/Cooking-by-Conversation",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,9 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@google/genai": "^1.23.0",
