@@ -4,5 +4,5 @@ import { defineConfig } from 'vite'
    // https://vitejs.dev/config/
    export default defineConfig({
      plugins: [react()],
-     base: '/Cooking-by-Conversation/', // Replace with your actual repository name
+     base: '/', 
    })
