@@ -36,7 +36,7 @@ export default function CookingAssistant() {
   const dietaryOptions = ['high-protein', 'vegetarian', 'vegan', 'gluten-free', 'dairy-free', 'none'];
 
   useEffect(() => {
-    const apiKey = import.meta.env.local.VITE_GEMINI_API_KEY;
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (apiKey) {
       genAIRef.current = new GoogleGenAI({ apiKey });
       console.log('Gemini API initialized successfully');
@@ -80,7 +80,7 @@ export default function CookingAssistant() {
 
   const speakText = async (text) => {
     try {
-      const openAIKey = import.meta.env.local.VITE_OPENAI_API_KEY;
+      const openAIKey = import.meta.env.VITE_OPENAI_API_KEY;
       
       if (openAIKey) {
         const response = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -430,23 +430,12 @@ Provide a concise, helpful answer to their question. If they're asking about ing
     
     For each recipe, provide:
     1. Recipe name
-    2. Prep time (e.g., "30min", "1 hour")
-    3. Ingredients list with amounts (e.g., "2 cups flour", "1 tbsp salt", "3 eggs")
-    4. Step-by-step instructions (clear, numbered steps)
-    5. Difficulty level (Easy, Medium, or Hard)
+    2. Prep time
+    3. Ingredients list
+    4. Step-by-step instructions
+    5. Difficulty level
     
-    IMPORTANT: Format as a valid JSON array with objects containing: name, prepTime, ingredients (array of strings with amounts), instructions (array of strings), difficulty
-    
-    Example format:
-    [
-      {
-        "name": "Chocolate Chip Cookies",
-        "prepTime": "30min",
-        "ingredients": ["2 cups all-purpose flour", "1 tsp baking soda", "1 cup butter", "3/4 cup sugar", "2 eggs", "2 cups chocolate chips"],
-        "instructions": ["Preheat oven to 375°F", "Mix butter and sugar", "Add eggs and mix well", "Combine dry ingredients", "Fold in chocolate chips", "Bake for 10-12 minutes"],
-        "difficulty": "Easy"
-      }
-    ]`;
+    Format as JSON array with objects containing: name, prepTime, ingredients (array), instructions (array), difficulty`;
 
       const result = await genAIRef.current.models.generateContent({
         model: 'gemini-2.0-flash-exp',
@@ -455,46 +444,26 @@ Provide a concise, helpful answer to their question. If they're asking about ing
       
       const responseText = result.text;
       
-      console.log('Raw API response:', responseText);
-      
       let recipes = [];
       try {
-        // Try to extract JSON from the response
         const jsonMatch = responseText.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           recipes = JSON.parse(jsonMatch[0]);
-          console.log('Parsed recipes:', recipes);
-          
-          // Ensure all recipes have proper ingredients arrays
-          recipes = recipes.map(recipe => {
-            if (!recipe.ingredients || !Array.isArray(recipe.ingredients) || recipe.ingredients.length === 0) {
-              console.warn('Recipe missing ingredients, using fallback:', recipe.name);
-              recipe.ingredients = ['Ingredients list not properly generated'];
-            }
-            if (!recipe.instructions || !Array.isArray(recipe.instructions) || recipe.instructions.length === 0) {
-              console.warn('Recipe missing instructions, using fallback:', recipe.name);
-              recipe.instructions = ['Instructions not properly generated'];
-            }
-            return recipe;
-          });
         } else {
-          console.warn('Could not find JSON in response, creating fallback recipe');
           recipes = [{
             name: 'Generated Recipe',
             prepTime: formData.cookingTime || '30min',
-            ingredients: (formData.ingredients || detectedIngredients || 'flour, eggs, milk').split(',').map(i => i.trim()).filter(i => i),
+            ingredients: (formData.ingredients || detectedIngredients || '').split(',').map(i => i.trim()).filter(i => i),
             instructions: responseText.split('\n').filter(line => line.trim()),
             difficulty: 'Medium'
           }];
         }
-      } catch (parseError) {
-        console.error('JSON parsing error:', parseError);
-        console.log('Failed to parse, creating fallback recipe');
+      } catch {
         recipes = [{
           name: 'Recipe Suggestion',
           prepTime: formData.cookingTime || '30min',
-          ingredients: ['See details in instructions below'],
-          instructions: responseText.split('\n').filter(line => line.trim()),
+          ingredients: ['See details below'],
+          instructions: [responseText],
           difficulty: 'Medium'
         }];
       }
@@ -820,16 +789,14 @@ Keep your response encouraging, concise, and helpful (under 150 words).`;
             <p className="section-description">Feel free to ask questions!</p>
 
             {/* Ingredients List */}
-            {selectedRecipe.ingredients && selectedRecipe.ingredients.length > 0 && (
-              <div style={{ marginBottom: '2rem', padding: '1.5rem', backgroundColor: '#fef3c7', borderRadius: '0.5rem', border: '2px solid #fbbf24' }}>
-                <h3 className="section-title" style={{ marginTop: 0, marginBottom: '1rem' }}>Ingredients</h3>
-                <ul className="recipe-list">
-                  {selectedRecipe.ingredients.map((ing, i) => (
-                    <li key={i} style={{ marginBottom: '0.5rem' }}>{ing}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <div style={{ marginBottom: '2rem', padding: '1.5rem', backgroundColor: '#fef3c7', borderRadius: '0.5rem', border: '2px solid #fbbf24' }}>
+              <h3 className="section-title" style={{ marginTop: 0, marginBottom: '1rem' }}>Ingredients</h3>
+              <ul className="recipe-list">
+                {selectedRecipe.ingredients?.map((ing, i) => (
+                  <li key={i} style={{ marginBottom: '0.5rem' }}>{ing}</li>
+                ))}
+              </ul>
+            </div>
 
             {/* Current Step Display */}
             <div className="current-step-container">
