@@ -36,7 +36,7 @@ export default function CookingAssistant() {
   const dietaryOptions = ['high-protein', 'vegetarian', 'vegan', 'gluten-free', 'dairy-free', 'none'];
 
   useEffect(() => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = import.meta.env.local.VITE_GEMINI_API_KEY;
     if (apiKey) {
       genAIRef.current = new GoogleGenAI({ apiKey });
       console.log('Gemini API initialized successfully');
@@ -80,7 +80,7 @@ export default function CookingAssistant() {
 
   const speakText = async (text) => {
     try {
-      const openAIKey = import.meta.env.VITE_OPENAI_API_KEY;
+      const openAIKey = import.meta.env.local.VITE_OPENAI_API_KEY;
       
       if (openAIKey) {
         const response = await fetch('https://api.openai.com/v1/audio/speech', {
