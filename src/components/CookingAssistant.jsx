@@ -26,15 +26,20 @@ export default function CookingAssistant() {
   const [isHandsFreeMode, setIsHandsFreeMode] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [currentStep, setCurrentStep] = useState(0);
+  const [processingVoiceCommand, setProcessingVoiceCommand] = useState(false);
+  const [listeningStatus, setListeningStatus] = useState('idle'); // 'idle', 'listening', 'processing'
   
   const fileInputRef = useRef(null);
   const progressImageInputRef = useRef(null);
   const recognitionRef = useRef(null);
   const genAIRef = useRef(null);
+  const handsFreeTimerRef = useRef(null);
+  const isProcessingRef = useRef(false);
 
   const moodOptions = ['spicy', 'comfort food', 'healthy', 'cheesy', 'sour', 'sweet'];
   const dietaryOptions = ['high-protein', 'vegetarian', 'vegan', 'gluten-free', 'dairy-free', 'none'];
 
+  // Initialize Gemini API
   useEffect(() => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (apiKey) {
@@ -44,6 +49,204 @@ export default function CookingAssistant() {
       console.error('VITE_GEMINI_API_KEY not found in environment variables');
     }
   }, []);
+
+  // Handle hands-free mode setup and teardown
+  useEffect(() => {
+    if (isHandsFreeMode) {
+      console.log('Starting hands-free mode');
+      setupSpeechRecognition(true);
+    } else {
+      console.log('Stopping hands-free mode');
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          console.warn('Error stopping recognition:', e);
+        }
+      }
+      if (handsFreeTimerRef.current) {
+        clearTimeout(handsFreeTimerRef.current);
+      }
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // Ignore errors on cleanup
+        }
+      }
+      if (handsFreeTimerRef.current) {
+        clearTimeout(handsFreeTimerRef.current);
+      }
+    };
+  }, [isHandsFreeMode]);
+
+  // Setup speech recognition with proper handlers
+  const setupSpeechRecognition = (continuous = false) => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {
+        console.warn('Error aborting existing recognition:', e);
+      }
+      recognitionRef.current = null;
+    }
+
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.');
+      return false;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    
+    recognition.continuous = continuous;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+    recognition.maxAlternatives = 3;
+
+    recognition.onstart = () => {
+      console.log('Speech recognition started, continuous mode:', continuous);
+      setIsListening(true);
+      setListeningStatus('listening');
+    };
+
+    recognition.onend = () => {
+      console.log('Speech recognition ended');
+      
+      if (!isProcessingRef.current && continuous && isHandsFreeMode) {
+        console.log('Auto-restarting hands-free mode recognition');
+        handsFreeTimerRef.current = setTimeout(() => {
+          if (isHandsFreeMode) {
+            try {
+              recognition.start();
+            } catch (e) {
+              console.error('Error restarting recognition in hands-free mode:', e);
+              setupSpeechRecognition(true);
+            }
+          }
+        }, 250);
+      } else if (!continuous) {
+        setIsListening(false);
+        setListeningStatus('idle');
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      
+      if (event.error === 'no-speech' && continuous && isHandsFreeMode) {
+        console.log('No speech detected, auto-restarting in hands-free mode');
+        handsFreeTimerRef.current = setTimeout(() => {
+          if (isHandsFreeMode) {
+            try {
+              recognition.start();
+            } catch (e) {
+              console.error('Error restarting after no-speech:', e);
+              setupSpeechRecognition(true);
+            }
+          }
+        }, 250);
+      } else if (event.error === 'aborted') {
+        console.log('Recognition aborted');
+      } else {
+        console.log('Recognition error, resetting hands-free if active');
+        if (continuous && isHandsFreeMode) {
+          handsFreeTimerRef.current = setTimeout(() => {
+            if (isHandsFreeMode) {
+              setupSpeechRecognition(true);
+            }
+          }, 1000);
+        }
+      }
+      
+      if (!continuous) {
+        setIsListening(false);
+        setListeningStatus('idle');
+      }
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[event.results.length - 1][0].transcript.trim();
+      console.log('Recognition result:', transcript);
+      
+      if (continuous) {
+        // For hands-free mode, look for wake word
+        const lowerTranscript = transcript.toLowerCase();
+        const wakeWordPatterns = [
+          /hey\s+mise/i, 
+          /hey\s+miss/i, 
+          /hay\s+mise/i, 
+          /hey\s+mees/i,
+          /hey\s+meese/i,
+          /hey\s+niece/i
+        ];
+        
+        let hasWakeWord = false;
+        let command = lowerTranscript;
+        
+        for (const pattern of wakeWordPatterns) {
+          if (pattern.test(lowerTranscript)) {
+            hasWakeWord = true;
+            command = lowerTranscript.replace(pattern, '').trim();
+            
+            // Remove any leading punctuation
+            command = command.replace(/^[,.!:;?]\s*/, '');
+            break;
+          }
+        }
+        
+        if (hasWakeWord && command) {
+          console.log('Wake word detected! Command:', command);
+          
+          // CRITICAL: Flag that we're processing to prevent auto-restart
+          isProcessingRef.current = true;
+          setProcessingVoiceCommand(true);
+          setListeningStatus('processing');
+          
+          // Use abort() instead of stop() for more reliable behavior
+          try {
+            recognition.abort();
+          } catch (e) {
+            console.warn('Error aborting recognition:', e);
+          }
+          
+          // Process the command
+          handleVoiceQuery(command).then(() => {
+            // Resume listening after command is processed
+            console.log('Command processed, resuming hands-free mode');
+            isProcessingRef.current = false;
+            setProcessingVoiceCommand(false);
+            
+            // Slight delay to ensure any audio playback is complete
+            setTimeout(() => {
+              if (isHandsFreeMode) {
+                setupSpeechRecognition(true);
+              }
+            }, 500);
+          });
+        } else {
+          console.log('No wake word detected or empty command');
+        }
+      } else {
+        // Normal mode - process any command directly
+        handleVoiceQuery(transcript);
+      }
+    };
+    
+    recognitionRef.current = recognition;
+    
+    // Start recognition
+    try {
+      recognition.start();
+      return true;
+    } catch (e) {
+      console.error('Error starting recognition:', e);
+      return false;
+    }
+  };
 
   const handleCheckboxChange = (category, value) => {
     setFormData(prev => ({
@@ -162,102 +365,28 @@ export default function CookingAssistant() {
   };
 
   const startVoiceRecognition = () => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = isHandsFreeMode;
-      recognitionRef.current.interimResults = false;
-
-      recognitionRef.current.onstart = () => {
-        console.log('Speech recognition started, hands-free:', isHandsFreeMode);
-        setIsListening(true);
-      };
-
-      recognitionRef.current.onresult = (event) => {
-        const transcript = event.results[event.results.length - 1][0].transcript;
-        console.log('Heard:', transcript);
-        
-        if (isHandsFreeMode) {
-          const lowerTranscript = transcript.toLowerCase();
-          if (lowerTranscript.includes('hey mise') || lowerTranscript.includes('hey miss')) {
-            const question = transcript.replace(/hey (mise|miss)[,!.]?\s*/i, '').trim();
-            if (question) {
-              console.log('Processing question:', question);
-              handleVoiceQuery(question);
-            }
-          } else {
-            console.log('No wake word detected, ignoring:', transcript);
-          }
-        } else {
-          handleVoiceQuery(transcript);
-        }
-      };
-
-      recognitionRef.current.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        if (!isHandsFreeMode) {
-          setIsListening(false);
-        }
-        if (isHandsFreeMode && event.error !== 'aborted' && event.error !== 'no-speech') {
-          console.log('Restarting recognition after error...');
-          setTimeout(() => {
-            if (isHandsFreeMode && recognitionRef.current) {
-              try {
-                recognitionRef.current.start();
-              } catch (e) {
-                console.log('Could not restart:', e);
-              }
-            }
-          }, 1000);
-        }
-      };
-
-      recognitionRef.current.onend = () => {
-        console.log('Speech recognition ended');
-        if (isHandsFreeMode) {
-          console.log('Hands-free mode active, restarting...');
-          setTimeout(() => {
-            if (isHandsFreeMode && recognitionRef.current) {
-              try {
-                recognitionRef.current.start();
-                console.log('Recognition restarted');
-              } catch (e) {
-                console.log('Could not restart on end:', e);
-              }
-            }
-          }, 100);
-        } else {
-          setIsListening(false);
-        }
-      };
-
-      recognitionRef.current.start();
+    if (isListening) {
+      stopVoiceRecognition();
     } else {
-      alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.');
+      setupSpeechRecognition(false);
     }
   };
 
   const stopVoiceRecognition = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+      try {
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
+      } catch (e) {
+        console.error('Error stopping recognition:', e);
+      }
     }
+    setIsListening(false);
+    setListeningStatus('idle');
   };
 
   const toggleHandsFreeMode = () => {
-    const newMode = !isHandsFreeMode;
-    setIsHandsFreeMode(newMode);
-    
-    if (newMode) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      setTimeout(() => {
-        startVoiceRecognition();
-      }, 300);
-    } else {
-      stopVoiceRecognition();
-    }
+    setIsHandsFreeMode(prevState => !prevState);
   };
 
   const handleVoiceQuery = async (query) => {
@@ -275,23 +404,6 @@ export default function CookingAssistant() {
       setConversationHistory(prev => [...prev, { role: 'assistant', content: response }]);
       await speakText(response);
     };
-
-    const restartHandsFree = () => {
-      if (isHandsFreeMode) {
-        console.log('Scheduling hands-free restart...');
-        setTimeout(() => {
-          if (isHandsFreeMode && recognitionRef.current) {
-            try {
-              console.log('Attempting to restart recognition...');
-              recognitionRef.current.start();
-              console.log('Recognition restarted successfully');
-            } catch (e) {
-              console.log('Recognition already running or error:', e.message);
-            }
-          }
-        }, 1000);
-      }
-    };
     
     if (lowerQuery.includes('next') || lowerQuery.includes('next step')) {
       if (currentStep < selectedRecipe.instructions.length - 1) {
@@ -299,40 +411,29 @@ export default function CookingAssistant() {
         setCurrentStep(nextStep);
         const response = `Step ${nextStep + 1}: ${selectedRecipe.instructions[nextStep]}`;
         await processResponse(response);
-        restartHandsFree();
-        return;
       } else {
         const response = "You've reached the last step of the recipe.";
         await processResponse(response);
-        restartHandsFree();
-        return;
       }
     } else if (lowerQuery.includes('repeat') || lowerQuery.includes('again')) {
-      const response = selectedRecipe.instructions[currentStep];
+      const response = `Step ${currentStep + 1}: ${selectedRecipe.instructions[currentStep]}`;
       await processResponse(response);
-      restartHandsFree();
-      return;
     } else if (lowerQuery.includes('previous') || lowerQuery.includes('back')) {
       if (currentStep > 0) {
         const prevStep = currentStep - 1;
         setCurrentStep(prevStep);
         const response = `Step ${prevStep + 1}: ${selectedRecipe.instructions[prevStep]}`;
         await processResponse(response);
-        restartHandsFree();
-        return;
       } else {
         const response = "You're already at the first step.";
         await processResponse(response);
-        restartHandsFree();
-        return;
       }
-    }
-
-    try {
-      const ingredientsList = selectedRecipe.ingredients?.map((ing, i) => `${i + 1}. ${ing}`).join('\n') || 'No ingredients list available';
-      const allSteps = selectedRecipe.instructions?.map((step, i) => `${i + 1}. ${step}`).join('\n') || 'No instructions available';
-      
-      const prompt = `You are a helpful cooking assistant. The user is currently cooking "${selectedRecipe.name}".
+    } else {
+      try {
+        const ingredientsList = selectedRecipe.ingredients?.map((ing, i) => `${i + 1}. ${ing}`).join('\n') || 'No ingredients list available';
+        const allSteps = selectedRecipe.instructions?.map((step, i) => `${i + 1}. ${step}`).join('\n') || 'No instructions available';
+        
+        const prompt = `You are a helpful cooking assistant. The user is currently cooking "${selectedRecipe.name}".
 
 FULL RECIPE CONTEXT:
 Ingredients:
@@ -347,27 +448,28 @@ CURRENT STATUS:
 USER QUESTION: "${query}"
 
 Provide a concise, helpful answer to their question. If they're asking about ingredients, measurements, or steps, reference the full recipe information above. Keep your response conversational and under 100 words.`;
-      
-      const result = await genAIRef.current.models.generateContent({
-        model: 'gemini-2.0-flash-exp',
-        contents: prompt
-      });
-      
-      const aiResponse = result.text;
-      await processResponse(aiResponse);
-      restartHandsFree();
-    } catch (error) {
-      console.error('Gemini API Error:', error);
-      
-      if (query.toLowerCase().includes('ingredient') || query.toLowerCase().includes('how much')) {
-        const fallbackResponse = `Here are the ingredients for ${selectedRecipe.name}: ${selectedRecipe.ingredients?.join(', ') || 'No ingredients available'}`;
-        await processResponse(fallbackResponse);
-      } else {
-        const errorMsg = 'Sorry, there was an error processing your request. Please try asking again.';
-        await processResponse(errorMsg);
+        
+        const result = await genAIRef.current.models.generateContent({
+          model: 'gemini-2.0-flash-exp',
+          contents: prompt
+        });
+        
+        const aiResponse = result.text;
+        await processResponse(aiResponse);
+      } catch (error) {
+        console.error('Gemini API Error:', error);
+        
+        if (query.toLowerCase().includes('ingredient') || query.toLowerCase().includes('how much')) {
+          const fallbackResponse = `Here are the ingredients for ${selectedRecipe.name}: ${selectedRecipe.ingredients?.join(', ') || 'No ingredients available'}`;
+          await processResponse(fallbackResponse);
+        } else {
+          const errorMsg = 'Sorry, there was an error processing your request. Please try asking again.';
+          await processResponse(errorMsg);
+        }
       }
-      restartHandsFree();
     }
+
+    return true; // Indicate processing is complete
   };
 
   const generateRecipes = async () => {
@@ -854,9 +956,15 @@ Keep your response encouraging, concise, and helpful (under 150 words).`;
                 marginBottom: '1rem',
                 border: '2px solid #fb923c'
               }}>
-                <p style={{ margin: 0, color: '#ea580c', fontWeight: '600' }}>
-                  🎤 Listening for "Hey, Mise!" commands...
-                </p>
+                {listeningStatus === 'processing' ? (
+                  <p style={{ margin: 0, color: '#b45309', fontWeight: '600' }}>
+                    ⏳ Processing your "Hey, Mise!" command...
+                  </p>
+                ) : (
+                  <p style={{ margin: 0, color: '#ea580c', fontWeight: '600' }}>
+                    🎤 Listening for "Hey, Mise!" commands...
+                  </p>
+                )}
                 <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.875rem', color: '#9a3412' }}>
                   Say "Hey, Mise!" followed by your question
                 </p>
@@ -865,7 +973,7 @@ Keep your response encouraging, concise, and helpful (under 150 words).`;
             
             {!isHandsFreeMode && (
               <button
-                onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
+                onClick={startVoiceRecognition}
                 className={`voice-button ${isListening ? 'voice-button-active' : ''}`}
               >
                 {isListening ? (
