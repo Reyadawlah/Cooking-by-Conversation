@@ -405,29 +405,48 @@ export default function CookingAssistant() {
       await speakText(response);
     };
     
+    // ✅ Handle "next" or "next step"
     if (lowerQuery.includes('next') || lowerQuery.includes('next step')) {
-      if (currentStep < selectedRecipe.instructions.length - 1) {
-        const nextStep = currentStep + 1;
-        setCurrentStep(nextStep);
-        const response = `Step ${nextStep + 1}: ${selectedRecipe.instructions[nextStep]}`;
-        await processResponse(response);
+      let nextStep;
+      setCurrentStep(prevStep => {
+        nextStep = prevStep + 1;
+        return nextStep < selectedRecipe.instructions.length ? nextStep : prevStep;
+      });
+
+      // Speak after state updates
+      await new Promise(r => setTimeout(r, 50)); // short wait to let state settle
+
+      if (nextStep < selectedRecipe.instructions.length) {
+        await processResponse(`Step ${nextStep + 1}: ${selectedRecipe.instructions[nextStep]}`);
       } else {
-        const response = "You've reached the last step of the recipe.";
-        await processResponse(response);
+        await processResponse("You've reached the last step of the recipe.");
       }
-    } else if (lowerQuery.includes('repeat') || lowerQuery.includes('again')) {
-      const response = `Step ${currentStep + 1}: ${selectedRecipe.instructions[currentStep]}`;
+      return true;
+    }
+
+    // ✅ Handle "repeat" or "again"
+    if (lowerQuery.includes('repeat') || lowerQuery.includes('again')) {
+      const response = `Repeating step ${currentStep + 1}: ${selectedRecipe.instructions[currentStep]}`;
       await processResponse(response);
-    } else if (lowerQuery.includes('previous') || lowerQuery.includes('back')) {
-      if (currentStep > 0) {
-        const prevStep = currentStep - 1;
-        setCurrentStep(prevStep);
-        const response = `Step ${prevStep + 1}: ${selectedRecipe.instructions[prevStep]}`;
-        await processResponse(response);
+      return true;
+    }
+
+    // ✅ Handle "previous" or "back"
+    if (lowerQuery.includes('previous') || lowerQuery.includes('back')) {
+      let prev;
+      setCurrentStep(prevStep => {
+        prev = prevStep > 0 ? prevStep - 1 : prevStep;
+        return prev;
+      });
+
+      await new Promise(r => setTimeout(r, 50));
+
+      if (prev < currentStep) {
+        await processResponse(`Step ${prev + 1}: ${selectedRecipe.instructions[prev]}`);
       } else {
-        const response = "You're already at the first step.";
-        await processResponse(response);
+        await processResponse("You're already at the first step.");
       }
+      return true;
     } else {
       try {
         const ingredientsList = selectedRecipe.ingredients?.map((ing, i) => `${i + 1}. ${ing}`).join('\n') || 'No ingredients list available';
